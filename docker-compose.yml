@@ -1,0 +1,40 @@
+services:
+  # 1. قاعدة البيانات (SQL Server)
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: url_shortener_db
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=YourStrongPassword123!
+    ports:
+      - "1435:1433"
+    restart: always
+
+  # 2. الكاش (Redis)
+  cache:
+    image: redis:latest
+    container_name: url_shortener_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+  # 3. الـ API الخاص بك
+  api:
+    build:
+      context: .
+      dockerfile: UrlShortener.Api/Dockerfile
+    container_name: url_shortener_api
+    ports:
+      - "5000:8080" # الوصول للـ API من بورت 5000
+    depends_on:
+      - db
+      - cache
+    environment:
+      - ConnectionStrings__DefaultConnection=Server=db;Database=UrlShortenerDb;User Id=sa;Password=YourStrongPassword123!;TrustServerCertificate=True;
+      - Redis__Configuration=cache:6379
+      - ASPNETCORE_ENVIRONMENT=Development
+    restart: on-failure
+
+networks:
+  default:
+    name: url_shortener_network
