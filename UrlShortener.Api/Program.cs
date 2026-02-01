@@ -1,6 +1,7 @@
 ﻿using AspNetCoreRateLimit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -8,6 +9,8 @@ using Scalar.AspNetCore;
 using Serilog;
 using Serilog.Events;
 using System.Text;
+using System.Threading.RateLimiting;
+using UrlShortener.Api.Middleware;
 using UrlShortener.Core.Entities;
 using UrlShortener.Core.Interfaces;
 using UrlShortener.Core.Services;
@@ -89,7 +92,16 @@ builder.Services.AddDistributedRateLimiting();
 builder.Services.AddSingleton<IIpPolicyStore, DistributedCacheIpPolicyStore>();
 builder.Services.AddSingleton<IRateLimitCounterStore, DistributedCacheRateLimitCounterStore>();
 builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
-
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddFixedWindowLimiter(policyName: "fixed", options =>
+    {
+        options.PermitLimit = 10; // عدد الطلبات المسموحة
+        options.Window = TimeSpan.FromMinutes(1); // المدة الزمنية
+        options.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+        options.QueueLimit = 2; // عدد الطلبات التي تنتظر في الطابور قبل الرفض
+    });
+});
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
@@ -116,6 +128,7 @@ builder.Services.AddOpenApi(options =>
     });
 });
 var app = builder.Build();
+app.UseMiddleware<GlobalExceptionMiddleware>();
 app.MapGet("/test-api", () => Results.Ok(new { Message = "API is running perfectly!" }));
 // --- تشغيل الـ Middleware Pipeline ---
 

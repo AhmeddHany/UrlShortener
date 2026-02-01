@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 using UrlShortener.Core.DTO;
 using UrlShortener.Core.Interfaces;
@@ -11,6 +12,7 @@ namespace UrlShortener.Api.Controllers
     // استخدام Primary Constructor لحقن الخدمة
     public class UrlController(IUrlService urlService) : ControllerBase
     {
+        [EnableRateLimiting("fixed")]
         [Authorize] // تأمين إنشاء الروابط ليكون للمستخدمين المسجلين فقط
         [HttpPost("shorten")]
         public async Task<IActionResult> Shorten([FromBody] UrlRequest request)
