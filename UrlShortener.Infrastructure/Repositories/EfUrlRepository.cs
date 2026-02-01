@@ -26,5 +26,11 @@ namespace UrlShortener.Infrastructure.Repositories
         {
             return await _dbContext.UrlMappings.FirstOrDefaultAsync(x => x.ShortCode == code);
         }
+        public async Task<List<UrlMapping>> GetAllByUserIdAsync(string userId)
+        {
+            return await _dbContext.UrlMappings
+                .Where(x => x.UserId == userId)
+                .ToListAsync();
+        }
     }
 }

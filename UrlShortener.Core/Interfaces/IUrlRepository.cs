@@ -7,5 +7,6 @@ namespace UrlShortener.Core.Interfaces
         Task AddAsync(UrlMapping mapping); // تحويل لـ Async
         Task UpdateAsync(UrlMapping mapping);
         Task<UrlMapping?> GetByCodeAsync(string code);
+        Task<List<UrlMapping>> GetAllByUserIdAsync(string userId);
     }
 }

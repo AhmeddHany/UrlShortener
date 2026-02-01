@@ -1,114 +1,131 @@
-﻿
-using AspNetCoreRateLimit;
+﻿using AspNetCoreRateLimit;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 using Scalar.AspNetCore;
 using Serilog;
-
 using Serilog.Events;
-
+using System.Text;
+using UrlShortener.Core.Entities;
 using UrlShortener.Core.Interfaces;
-
 using UrlShortener.Core.Services;
-
+using UrlShortener.Infrastructure.BackgroundServices;
 using UrlShortener.Infrastructure.Data;
 using UrlShortener.Infrastructure.Extensions;
 using UrlShortener.Infrastructure.Repositories;
-
-
+using UrlShortener.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-
-
-// 1. إعداد الـ Logger (Serilog Only)
-
+// 1. إعداد الـ Logger (Serilog)
 Log.Logger = new LoggerConfiguration()
-
     .ReadFrom.Configuration(builder.Configuration)
-
     .Enrich.FromLogContext()
-
-    .WriteTo.File("Logs/all-logs-.txt",
-
-        rollingInterval: RollingInterval.Day,
-
-        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
-
+    .WriteTo.File("Logs/all-logs-.txt", rollingInterval: RollingInterval.Day)
     .WriteTo.File("Logs/errors-.txt", LogEventLevel.Error, rollingInterval: RollingInterval.Day)
-
     .CreateLogger();
-
-
 
 builder.Host.UseSerilog();
 
-
-
-// 2. إعداد الـ Database والـ Services
-
+// 2. إعداد قاعدة البيانات و Redis
 builder.Services.AddDbContextPool<UrlDbContext>(options =>
-
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddStackExchangeRedisCache(options =>
 {
-    // بنقول له: لو لقيت إعدادات في الـ Environment (بتاعة الدوكر) خدها، لو ملقتش خليك localhost
     var redisConfig = builder.Configuration["Redis:Configuration"] ?? "localhost:6379";
     options.Configuration = redisConfig;
     options.InstanceName = "UrlShortener_";
 });
 
-// 4. إعداد الـ Rate Limiting (تأمين السيستم)
+// 3. إعداد Identity
+builder.Services.AddIdentity<User, IdentityRole>()
+    .AddEntityFrameworkStores<UrlDbContext>()
+    .AddDefaultTokenProviders();
 
-builder.Services.AddMemoryCache(); // مطلوب للـ Rate Limit
+// 4. تسجيل الخدمات (Dependency Injection) - تم التعديل لحل مشكلة الـ TestController
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IUrlRepository, EfUrlRepository>();
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+builder.Services.AddSingleton<IAnalyticsChannel, AnalyticsChannel>();
 
+// تسجيل الخدمات بالكلاس والواجهة معاً لضمان التوافق
+builder.Services.AddScoped<UrlService>();
+builder.Services.AddScoped<IUrlService>(sp => sp.GetRequiredService<UrlService>());
+
+builder.Services.AddScoped<AnalyticsService>();
+builder.Services.AddScoped<IAnalyticsService>(sp => sp.GetRequiredService<AnalyticsService>());
+
+// تسجيل الـ Worker (Background Service)
+builder.Services.AddHostedService<AnalyticsWorker>();
+
+// 5. إعداد الـ Authentication & JWT
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = builder.Configuration["Jwt:Issuer"],
+        ValidAudience = builder.Configuration["Jwt:Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!))
+    };
+});
+
+// 6. إعداد الـ Rate Limiting & CORS
+builder.Services.AddHttpClient();
+builder.Services.AddMemoryCache();
 builder.Services.Configure<IpRateLimitOptions>(builder.Configuration.GetSection("IpRateLimiting"));
-
 builder.Services.AddDistributedRateLimiting();
-
 builder.Services.AddSingleton<IIpPolicyStore, DistributedCacheIpPolicyStore>();
-
 builder.Services.AddSingleton<IRateLimitCounterStore, DistributedCacheRateLimitCounterStore>();
-
 builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
 
-builder.Services.AddScoped<IUrlRepository, EfUrlRepository>();
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
+    });
+});
 
-builder.Services.AddScoped<UrlService>();
-
-
-
+// 7. إعداد OpenApi & Scalar
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
-
 builder.Services.AddProblemDetails();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddControllers();
 
 builder.Services.AddOpenApi(options =>
 {
     options.AddDocumentTransformer((document, context, cancellationToken) =>
     {
-        // إحنا بنجبر الـ UI يكلم العنوان اللي المتصفح شايفه
-        document.Servers = new List<Microsoft.OpenApi.Models.OpenApiServer>
+        document.Servers = new List<OpenApiServer>
         {
-            new Microsoft.OpenApi.Models.OpenApiServer { Url = "http://localhost:5000" }
+            new OpenApiServer { Url = "http://localhost:5210" }
         };
         return Task.CompletedTask;
     });
 });
-
-builder.Services.AddControllers();
-
-builder.Services.AddEndpointsApiExplorer();
-
-
-
 var app = builder.Build();
+app.MapGet("/test-api", () => Results.Ok(new { Message = "API is running perfectly!" }));
+// --- تشغيل الـ Middleware Pipeline ---
+
+// 1. التحديث التلقائي لقاعدة البيانات (Migration)
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
     try
     {
         var context = services.GetRequiredService<UrlDbContext>();
-
         if (context.Database.GetPendingMigrations().Any())
         {
             context.Database.Migrate();
@@ -117,33 +134,27 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"❌ An error occurred while migrating the database: {ex.Message}");
+        Console.WriteLine($"❌ Migration Error: {ex.Message}");
     }
 }
-app.UseIpRateLimiting();
-
-app.UseExceptionHandler();
 
 app.UseSerilogRequestLogging();
 
+// الترتيب هنا حيوي جداً لعمل الـ CORS مع الـ Scalar
+app.UseCors("AllowAll");
 
+app.UseIpRateLimiting();
 
 if (app.Environment.IsDevelopment())
-
 {
-
     app.MapOpenApi();
-    app.MapScalarApiReference(); // ✅ ضيف السطر ده عشان يطلع الـ UI
+    app.MapScalarApiReference();
 }
 
-
-
 app.UseHttpsRedirection();
-
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-
-
 
 app.Run();

@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using UrlShortener.Core.Entities;
+using UrlShortener.Core.Interfaces;
 using UrlShortener.Core.Services;
 using UrlShortener.Infrastructure.Data;
 
@@ -18,18 +19,23 @@ namespace UrlShortener.Api.Controllers
         [HttpPost("stress")]
         public async Task<IActionResult> Stress([FromServices] IServiceScopeFactory scopeFactory)
         {
+            // سنستخدم معرف مستخدم افتراضي لعملية اختبار الضغط
+            string dummyUserId = "system-stress-test";
+
             var tasks = Enumerable.Range(0, 10000).Select(async i =>
             {
-                // فتح Scoped Container جديد لكل Thread
                 using (var scope = scopeFactory.CreateScope())
                 {
-                    var service = scope.ServiceProvider.GetRequiredService<UrlService>();
-                    await service.CreateShortUrl("https://example.com/" + i);
+                    // ملاحظة: يفضل دائماً استخدام الواجهة IUrlService بدلاً من الكلاس المباشر
+                    var service = scope.ServiceProvider.GetRequiredService<IUrlService>();
+
+                    // تمرير الرابط ومعرف المستخدم معاً
+                    await service.CreateShortUrl("https://example.com/" + i, dummyUserId);
                 }
             });
 
-            await Task.WhenAll(tasks); // تشغيل الكل بالتوازي بأمان
-            return Ok("Done");
+            await Task.WhenAll(tasks);
+            return Ok("Completed 10,000 requests successfully.");
         }
         [HttpPost("stress-bulk")]
         public async Task<IActionResult> StressBulk([FromServices] IServiceScopeFactory scopeFactory)

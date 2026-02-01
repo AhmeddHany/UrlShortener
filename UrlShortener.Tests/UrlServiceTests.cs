@@ -1,6 +1,5 @@
 ﻿using Microsoft.Extensions.Caching.Distributed;
 using Moq;
-using System.Text;
 using UrlShortener.Core.Entities;
 using UrlShortener.Core.Interfaces;
 using UrlShortener.Core.Services;
@@ -10,61 +9,71 @@ namespace UrlShortener.Tests
 {
     public class UrlServiceTests
     {
-        private readonly Mock<IUrlRepository> _repositoryMock;
+        private readonly Mock<IUnitOfWork> _unitOfWorkMock;
+        private readonly Mock<IUrlRepository> _urlRepoMock;
         private readonly Mock<IDistributedCache> _cacheMock;
+        private readonly Mock<IAnalyticsChannel> _analyticsChannelMock; // أضف هذا الـ Mock
         private readonly UrlService _urlService;
-
         public UrlServiceTests()
         {
-            _repositoryMock = new Mock<IUrlRepository>();
+            _unitOfWorkMock = new Mock<IUnitOfWork>();
+            _urlRepoMock = new Mock<IUrlRepository>();
             _cacheMock = new Mock<IDistributedCache>();
-            _urlService = new UrlService(_repositoryMock.Object, _cacheMock.Object);
+            _analyticsChannelMock = new Mock<IAnalyticsChannel>(); // تهيئة الـ Mock
+
+            _unitOfWorkMock.Setup(u => u.Urls).Returns(_urlRepoMock.Object);
+
+            // حقن الباراميتر الثالث الجديد هنا
+            _urlService = new UrlService(_unitOfWorkMock.Object, _cacheMock.Object, _analyticsChannelMock.Object);
         }
 
         [Fact]
-        public async Task GetOriginalUrl_ShouldReturnFromCache_WhenKeyExists()
+        public async Task GetOriginalUrl_ShouldReturnMappingFromDb_WhenCacheMisses()
         {
             // Arrange
             string code = "testCode";
-            string expectedUrl = "https://google.com";
-            var encodedUrl = Encoding.UTF8.GetBytes(expectedUrl);
+            var mapping = new UrlMapping { Id = 1, ShortCode = code, LongUrl = "https://google.com" };
 
-            // بنخلي الـ Mock يرجع الـ bytes كأنها جاية من Redis
-            _cacheMock.Setup(x => x.GetAsync(code, default))
-                      .ReturnsAsync(encodedUrl);
+            // محاكاة عدم وجود بيانات في الكاش
+            _cacheMock.Setup(x => x.GetAsync(code, default)).ReturnsAsync((byte[]?)null);
+
+            // محاكاة وجود البيانات في قاعدة البيانات
+            _urlRepoMock.Setup(x => x.GetByCodeAsync(code)).ReturnsAsync(mapping);
 
             // Act
             var result = await _urlService.GetOriginalUrl(code);
 
             // Assert
-            Assert.Equal(expectedUrl, result);
-            // نتأكد إننا مروحناش للداتابيز لأننا لقيناها في الكاش
-            _repositoryMock.Verify(x => x.GetByCodeAsync(It.IsAny<string>()), Times.Never);
+            Assert.NotNull(result);
+            Assert.Equal(mapping.LongUrl, result.LongUrl);
+            Assert.Equal(mapping.Id, result.Id);
         }
-        [Fact]
-        public async Task CreateShortUrl_ShouldSaveToDbAndCache_WhenUrlIsValid()
-        {
-            // 1. Arrange (التجهيز)
-            var longUrl = "https://www.google.com";
 
-            // 2. Act (التنفيذ)
-            var result = await _urlService.CreateShortUrl(longUrl);
+        [Fact]
+        public async Task CreateShortUrl_ShouldSaveToDbAndCompleteTransaction()
+        {
+            // Arrange
+            var longUrl = "https://www.google.com";
+            var userId = "user-123";
+
+            // Act
+            var result = await _urlService.CreateShortUrl(longUrl, userId);
+
+            // Assert
             Assert.NotNull(result);
             Assert.Equal(longUrl, result.LongUrl);
+            Assert.Equal(userId, result.UserId);
 
-            // ب- نتأكد إن الـ ShortCode اتولد فعلاً (مش null ولا فاضي)
-            Assert.False(string.IsNullOrWhiteSpace(result.ShortCode));
+            // التأكد من إضافة الرابط واستدعاء CompleteAsync لحفظ التغييرات
+            _urlRepoMock.Verify(r => r.AddAsync(It.IsAny<UrlMapping>()), Times.Once);
+            _unitOfWorkMock.Verify(u => u.CompleteAsync(), Times.Once);
 
-            // ج- نتأكد إن الخدمة نادت الداتابيز عشان تحفظ (Verify)
-            _repositoryMock.Verify(r => r.AddAsync(It.IsAny<UrlMapping>()), Times.Once);
-
-            // د- نتأكد إن الخدمة حطت الرابط في الكاش فوراً (Write-through Cache)
+            // التأكد من تحديث الكاش
             _cacheMock.Verify(c => c.SetAsync(
                 result.ShortCode,
                 It.IsAny<byte[]>(),
                 It.IsAny<DistributedCacheEntryOptions>(),
-                default),
-            Times.Once);
+                default), Times.Once);
         }
     }
 }

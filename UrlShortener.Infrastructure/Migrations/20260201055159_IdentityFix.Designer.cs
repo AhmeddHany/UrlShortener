@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using UrlShortener.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using UrlShortener.Infrastructure.Data;
 namespace UrlShortener.Infrastructure.Migrations
 {
     [DbContext(typeof(UrlDbContext))]
-    partial class UrlDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260201055159_IdentityFix")]
+    partial class IdentityFix
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -184,7 +187,10 @@ namespace UrlShortener.Infrastructure.Migrations
                     b.Property<string>("Referrer")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<long>("UrlMappingId")
+                    b.Property<int>("UrlMappingId")
+                        .HasColumnType("int");
+
+                    b.Property<long>("UrlMappingId1")
                         .HasColumnType("bigint");
 
                     b.Property<string>("UserAgent")
@@ -192,7 +198,7 @@ namespace UrlShortener.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UrlMappingId");
+                    b.HasIndex("UrlMappingId1");
 
                     b.ToTable("ClickAnalytics");
                 });
@@ -365,7 +371,7 @@ namespace UrlShortener.Infrastructure.Migrations
                 {
                     b.HasOne("UrlShortener.Core.Entities.UrlMapping", "UrlMapping")
                         .WithMany()
-                        .HasForeignKey("UrlMappingId")
+                        .HasForeignKey("UrlMappingId1")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
