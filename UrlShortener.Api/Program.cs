@@ -1,4 +1,6 @@
 ﻿using AspNetCoreRateLimit;
+using FluentValidation;
+using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
@@ -14,6 +16,7 @@ using UrlShortener.Api.Middleware;
 using UrlShortener.Core.Entities;
 using UrlShortener.Core.Interfaces;
 using UrlShortener.Core.Services;
+using UrlShortener.Core.Validators;
 using UrlShortener.Infrastructure.BackgroundServices;
 using UrlShortener.Infrastructure.Data;
 using UrlShortener.Infrastructure.Extensions;
@@ -115,7 +118,8 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddControllers();
-
+builder.Services.AddFluentValidationAutoValidation();
+builder.Services.AddValidatorsFromAssemblyContaining<UrlRequestValidator>();
 builder.Services.AddOpenApi(options =>
 {
     options.AddDocumentTransformer((document, context, cancellationToken) =>
